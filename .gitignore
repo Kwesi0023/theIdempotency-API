@@ -1,0 +1,10 @@
+...tN
+# environental variables 
+*.env
+*.env.local
+
+# binaries
+*.exe
+
+#Go build files
+*go.sum 

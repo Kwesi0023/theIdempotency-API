@@ -40,7 +40,8 @@ curl.exe -X POST {{baseURL}}/process-payment -H "Content-Type: application/json"
 ```
 response: `` missing Idempotency-Key header``
 
-## sequence diagram
+```mermaid
+sequenceDiagram
     autonumber
     actor Client
     participant API as Idempotency Gateway
@@ -49,45 +50,42 @@ response: `` missing Idempotency-Key header``
     %% --- FIRST TRANSACTION PATH ---
     rect rgb(230, 245, 230)
         note over Client, DB: Path 1: First Transaction (Happy Path)
-        Client->>API: POST /process-payment [Headers: Idempotency-Key] [cite: 16]
+        Client->>API: POST /process-payment [Headers: Idempotency-Key]
         activate API
-        API->>API: Read payload & compute SHA-256 hash 
-        API->>DB: Begin Transaction (tx.Begin()) 
-        API->>DB: SELECT ... FOR UPDATE (Check if Key exists) 
-        DB-->>API: Row Not Found (gorm.ErrRecordNotFound) 
+        API->>API: Read payload & compute SHA-256 hash
+        API->>DB: Begin Transaction (tx.Begin())
+        API->>DB: SELECT ... FOR UPDATE (Check if Key exists)
+        DB-->>API: Row Not Found (gorm.ErrRecordNotFound)
         
-        API->>DB: INSERT row [Status: "IN_FLIGHT", RequestHash] 
-        note over API, DB: Transaction remains open, holding the InnoDB row lock 
+        API->>DB: INSERT row [Status: "IN_FLIGHT", RequestHash]
         
-        API->>API: Simulate downstream processing (time.Sleep 2s) [cite: 18, 44]
-        API->>API: Parse JSON payload & build charge message 
+        API->>API: Simulate downstream processing (time.Sleep 2s)
         
-        API->>DB: UPDATE row [Status: "SUCCESS", ResponseCode: 200, ResponseBody] 
-        API->>DB: Commit Transaction (tx.Commit()) 
-        note over API, DB: InnoDB row lock is released 
+        API->>DB: UPDATE row [Status: "SUCCESS", ResponseCode: 200, ResponseBody]
+        API->>DB: Commit Transaction (tx.Commit())
         
-        API-->>Client: 200 OK {"message": "Charged 100 GHS"} [cite: 18, 19, 44]
+        API-->>Client: 200 OK {"message": "Charged 100 GHS"}
         deactivate API
     end
 
     %% --- DUPLICATE TRANSACTION PATH ---
     rect rgb(240, 240, 255)
         note over Client, DB: Path 2: Duplicate Attempt (Cached Replay)
-        Client->>API: POST /process-payment [Same Idempotency-Key & Payload] [cite: 21]
+        Client->>API: POST /process-payment [Same Idempotency-Key & Payload]
         activate API
-        API->>API: Read payload & compute SHA-256 hash 
-        API->>DB: Begin Transaction (tx.Begin()) 
-        API->>DB: SELECT ... FOR UPDATE 
-        DB-->>API: Row Found [Status: "SUCCESS"] 
+        API->>API: Read payload & compute SHA-256 hash
+        API->>DB: Begin Transaction (tx.Begin())
+        API->>DB: SELECT ... FOR UPDATE
+        DB-->>API: Row Found [Status: "SUCCESS"]
         
         alt Hashes Match (Valid Replay)
-            API->>API: Validate incoming hash == stored hash 
-            API->>DB: Commit Transaction 
-            API-->>Client: 200 OK [Header: X-Cache-Hit: true] + Cached Body [cite: 22, 23, 44]
+            API->>API: Validate incoming hash == stored hash
+            API->>DB: Commit Transaction
+            API-->>Client: 200 OK [Header: X-Cache-Hit: true] + Cached Body
         else Hashes Mismatch (Fraud/Payload Tampering)
-            API->>API: Validate incoming hash != stored hash 
-            API->>DB: Commit Transaction 
-            API-->>Client: 409 Conflict {"error": "Idempotency key already used..."} [cite: 25, 26, 44]
+            API->>API: Validate incoming hash != stored hash
+            API->>DB: Commit Transaction
+            API-->>Client: 409 Conflict {"error": "Idempotency key already used..."}
         end
         deactivate API
     end
@@ -95,24 +93,19 @@ response: `` missing Idempotency-Key header``
     %% --- CONCURRENT IN-FLIGHT PATH ---
     rect rgb(255, 240, 230)
         note over Client, DB: Path 3: Concurrent Request (In-Flight Block)
-        Note over Client: Request A arrives and locks row as IN_FLIGHT [cite: 28, 44]
-        
-        Client->>API: Request B arrives (Same Key & Payload while A is mid-flight) [cite: 28]
+        Client->>API: Request B arrives (Same Key & Payload while A is mid-flight)
         activate API
-        API->>API: Read payload & compute SHA-256 hash 
-        API->>DB: Begin Transaction (tx.Begin()) 
-        API->>DB: SELECT ... FOR UPDATE 
-        note over API, DB: Request B blocks/waits here because Request A holds the write lock [cite: 30, 44]
+        API->>API: Read payload & compute SHA-256 hash
+        API->>DB: Begin Transaction (tx.Begin())
+        API->>DB: SELECT ... FOR UPDATE
         
-        Note over DB: Request A finishes sleeping, updates to SUCCESS, and Commits 
-        note over API, DB: Lock released! Request B resumes execution 
-        DB-->>API: Returns Row [Initially captured state: IN_FLIGHT] 
+        DB-->>API: Returns Row [Initially captured state: IN_FLIGHT]
         
-        API->>DB: Re-fetch row (tx.First()) to grab freshly committed updates 
-        DB-->>API: Returns Updated Row [Status: "SUCCESS"] 
+        API->>DB: Re-fetch row (tx.First()) to grab freshly committed updates
+        DB-->>API: Returns Updated Row [Status: "SUCCESS"]
         
-        API->>API: Validate incoming hash == stored hash 
-        API->>DB: Commit Transaction 
-        API-->>Client: 200 OK [Header: X-Cache-Hit: true] + Cached Body [cite: 22, 23, 44]
+        API->>API: Validate incoming hash == stored hash
+        API->>DB: Commit Transaction
+        API-->>Client: 200 OK [Header: X-Cache-Hit: true] + Cached Body
         deactivate API
     end

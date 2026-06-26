@@ -1,4 +1,4 @@
-## Welcome to theIdempotency
+## Welcome to theIdempotency-API
 
 # The Normal way
 So a normal call  
